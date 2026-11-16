@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Launch Radar — protocols before their token</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="mark">◉</div>
+    <div>
+      <h1>Token Launch Radar</h1>
+      <p class="sub">Which protocol's token would be worth the most — before it exists.</p>
+    </div>
+  </div>
+  <div class="stats" id="stats"></div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab active" data-tab="board" role="tab">Board</button>
+  <button class="tab" data-tab="live" role="tab">Live tokens</button>
+  <button class="tab" data-tab="model" role="tab">The model</button>
+</nav>
+
+<main>
+  <section id="tab-board" class="panel">
+    <div class="controls">
+      <input id="q" type="search" placeholder="Search name or slug…" aria-label="Search protocols">
+      <select id="cat" aria-label="Filter by category"><option value="">All categories</option></select>
+      <select id="chain" aria-label="Filter by chain"><option value="">All chains</option></select>
+      <select id="sort" aria-label="Sort board">
+        <option value="rank">Sort: rank</option>
+        <option value="value">Sort: implied value</option>
+        <option value="tvl">Sort: TVL</option>
+        <option value="growth">Sort: 7d growth</option>
+        <option value="age">Sort: age</option>
+      </select>
+      <label class="check"><input type="checkbox" id="watchonly"> Watchlist only</label>
+    </div>
+    <p class="note" id="count"></p>
+    <div class="tablewrap">
+      <table id="board">
+        <thead>
+          <tr>
+            <th>#</th><th>Protocol</th><th>Category</th><th>Chains</th>
+            <th class="num">TVL</th><th class="num">7d</th><th class="num">Age</th>
+            <th class="num">Implied value</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p class="fine">Implied value is this radar's own claim from the snapshot's figures — TVL times its category's multiple, averaged in log space with a size curve fitted across all live tokens (a token's market cap grows with TVL to the power 0.52 in this snapshot, not one-for-one), then nudged by seven-day growth, age with no token, and chain breadth — never a prediction that a token will launch, or when. The model checks itself on the snapshot's own live tokens, five folds held out: see "The model". A protocol listed as pre-token records no token in DefiLlama; that is not proof it has none. A "lifted early find" is a protocol below the $50M floor the model ranked into the top 40 on its fundamentals.</p>
+  </section>
+
+  <section id="tab-live" class="panel hidden">
+    <p class="note">These protocols already have a token that trades, so the board never ranks them. Their market cap is the market's own value, not a model.</p>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Protocol</th><th>Category</th><th>Chains</th><th class="num">TVL</th><th class="num">Market cap</th><th class="num">7d</th></tr>
+        </thead>
+        <tbody id="liveRows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-model" class="panel hidden">
+    <h2>How the radar scores a protocol</h2>
+    <p>Every row is scored by the same formula, from the snapshot alone. No name is ever special-cased. The base value is the average, in log space, of two estimators of the same quantity — the value of a token that does not exist yet — so neither estimator decides a row alone:</p>
+    <p><strong>1. The category multiple.</strong> The median market-cap/TVL of the live-token protocols in the same category, shrunk toward the global median with a prior of 4 protocols, clamped to 0.08–0.60. A lending token and a prediction-market token are not priced at the same multiple of TVL — and the snapshot itself says what each multiple is.</p>
+    <p><strong>2. The size curve.</strong> A least-squares fit of log10(market cap) on log10(TVL) across all live-token protocols, plus a per-category offset. In this snapshot the fit is log10(market cap) = <span id="curveIntercept">3.02</span> + <span id="curveSlope">0.52</span> × log10(TVL): a protocol with ten times the TVL is worth about three times the token, not ten times. The offset is the shrunk mean of the category's residuals, each residual clipped to ±1.0 in log10 and the offset capped at ±0.5, so one protocol cannot move its whole category — this snapshot holds one prediction-market token at 400× its TVL, and without the clipping it would have priced every prediction market 8.8× above the curve; with it, the category's offset is +0.20, about 1.6×.</p>
+    <p>The two are averaged because each is wrong in a different direction: the multiple prices a $2.7B curator at the same multiple as a $5M one, and the curve alone compresses the top too hard. The average keeps the top of the board in the range the snapshot's own live tokens occupy — the biggest live tokens run $250M to $2.6B, and this board's top row is <span id="topImplied">$418M</span>.</p>
+    <pre id="formula"></pre>
+    <div id="modelConsts"></div>
+    <h2>Checked, not just fitted</h2>
+    <div class="valbox" id="validationBox"></div>
+    <p>The check is a calibration check, not a proof. It says how well the model predicts tokens that already trade, so the board's claims about tokens that do not exist yet are grounded in something measured. Its limit is honest too: the snapshot's own live tokens span market-cap/TVL from 0.003 to 400, so no model of this size predicts a single token closely — what the check shows is that the calibration is real and the ranking is sound.</p>
+    <h2>What "pre-token" means</h2>
+    <p>A protocol is pre-token when its DefiLlama record carries no market cap, no CoinGecko id and no symbol. The watchlist is the floor: every protocol at or above $50,000,000 TVL that records no token and is not a wrapped, staked or bridged product of a token that already trades. The board adds every other rankable pre-token protocol the list leaves out, above or below that floor, by TVL — the early ones the radar exists to find. Six product lines are left out because DefiLlama records them under a protocol whose token already trades (Solv, IPOR, Circle, GMX and Pendle).</p>
+    <h2>How to read a farm plan</h2>
+    <p>Each row's plan is six steps built from the protocol's own record — its category, its chains, its TVL and its age. Every step states what it costs and how long it takes, with gas priced for the protocol's own first chain, not a flat rate; the second step carries the one guardrail for its category, and the third names the weekly amount. Never pay to claim: a real claim costs gas only, and only from a link the protocol itself publishes.</p>
+  </section>
+</main>
+
+<aside id="detail" class="detail hidden" aria-live="polite">
+  <button id="closeDetail" class="close" aria-label="Close detail">✕</button>
+  <div id="detailBody"></div>
+</aside>
+
+<footer>
+  <p>Token Launch Radar · model <span id="modelVer"></span> · snapshot <span id="asOf"></span> · source: <span id="src"></span></p>
+</footer>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
