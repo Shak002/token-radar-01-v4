@@ -52,6 +52,8 @@ with growth as a small stated nudge is the one shipped.
   (was #45), just outside the top 40.
 - Rows 192 (40 watchlist, 16 early-above, 136 early-below), farm steps all
   20–600 chars, deterministic: two runs byte-identical.
+- Screenshots: 1-board 167,443 B, 2-detail 267,562 B, 3-filtered 162,921 B
+  (all 1440×900, under the 512 KiB cap); dossier 826,411 B.
 
 ## Repo
 
