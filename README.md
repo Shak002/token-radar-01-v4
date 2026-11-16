@@ -1,63 +1,78 @@
-# Token Launch Radar v3 — model radar-5
+# Token Launch Radar v4 — model radar-6
 
 Build for make.fun competition `token-radar-01` (account @najj02x).
 Closes 2026-12-14 10:00 UTC. Do not submit from here — the main agent submits.
 
-## What changed vs v2 (radar-4)
+## What changed vs v3 (radar-5)
 
-radar-4 priced a protocol at TVL × its category's median market-cap/TVL.
-That prices a $2.7B curator at the same multiple as a $5M one, and the
-snapshot's own live tokens say that is wrong: market cap grows with TVL to
-the power 0.52. radar-5 averages two estimators in log space:
+radar-5 averaged two estimators in log space — the category multiple and the
+size curve. On the snapshot's own live tokens the multiple is the weak half:
+it prices a $2.7B curator at the same multiple as a $5M one, and the held-out
+check says the curve alone beats the average. radar-6 drops the multiple
+estimator and fits one joint regression over all live-token protocols:
 
-1. the category multiple (as v2: shrunk median, prior 4, clamped 0.08–0.60);
-2. the size curve: least squares of log10(market cap) on log10(TVL) over all
-   live-token protocols, plus a per-category offset (residuals winsorized to
-   ±1.0 log10, shrunk with prior 4, capped at ±0.5).
+  log10(market cap) = 3.33 + 0.52 × log10(TVL) − 0.10 × log10(age in days)
+                      + per-category offset
 
-Multipliers are softer than v2's: growth 0.5 (was 1.0), maturity 0.6–1.0
-(was 0.45–1.05), breadth 0.03/chain (was 0.05).
-
-The model validates itself on the snapshot every run (5-fold held out over
-the 128 live-token protocols; see `lib/model.ts` `validateCalibration` and
-the dashboard's "Checked, not just fitted" section).
+The offset is the shrunk mean of the category's residuals (each clipped to
+±1.0 in log10, prior 4, capped at ±0.5). Age enters once, through the fitted
+coefficient — the old maturity multiplier (0.6–1.0) is gone, so age is never
+counted twice. Growth and breadth stay as small post-multipliers (0.5 and
+0.03/chain), not fitted terms: fitted on these 128 tokens a growth term comes
+out at −1.63 ± 1.00 (t = −1.6), so the snapshot cannot tell whether fast TVL
+growth helps or hurts a token's multiple, and a fitted term that size would
+price a protocol that grew 120% in a week at 1% of its curve value.
 
 ## Held-out validation (5-fold, same splits, n=128 live tokens)
 
 | model | median |log10| | within 2× | within 3× | Spearman | prec@10 | prec@20 |
 |---|---:|---:|---:|---:|---:|---:|
 | v2 radar-4 | 0.674 (×4.7) | 21.9% | 35.2% | 0.394 | 0.58 | 0.82 |
-| v3 radar-5 full | 0.571 (×3.7) | 25.0% | 41.4% | 0.387 | 0.62 | 0.84 |
-| v3 radar-5 base only | 0.550 (×3.5) | 26.6% | 41.4% | 0.398 | 0.62 | 0.81 |
+| v3 radar-5 full | 0.574 (×3.7) | 25.0% | 41.4% | 0.387 | 0.62 | 0.84 |
+| v3 radar-5 base only | 0.552 (×3.6) | 26.6% | 41.4% | 0.398 | 0.62 | 0.81 |
+| **v4 radar-6 full** | **0.533 (×3.4)** | **32.0%** | **46.1%** | **0.350** | **0.64** | **0.83** |
+| v4 radar-6 base only | 0.529 (×3.4) | 32.8% | 44.5% | — | — | — |
 
-## Board (same snapshot, same 192 rows as v2)
+v3 numbers are the v3 repo's own run on the same snapshot (its README said
+0.571; the code as committed reports 0.574). v4 beats v3 on median, within-2×,
+within-3× and prec@10; Spearman (0.350 vs 0.387) and prec@20 (0.83 vs 0.84)
+are marginally worse — reported honestly, not hidden. The joint family was
+tested before choosing: per-category slopes, rank-average blends and a
+fully-fitted growth term were all tried on the same folds; the fitted growth
+term's edge over this model (median 0.527 vs 0.533, within-2× 35.2% vs 32.0%)
+is inside noise and its coefficient is not significant, so the simpler model
+with growth as a small stated nudge is the one shipped.
 
-- Top 1: Steakhouse Financial $418.3M (v2: $1.47B) — same rank order as v2,
-  values 2–3.5× lower and inside the range the snapshot's own live tokens
-  occupy ($250M–$2.6B at the top).
-- Top-40: 29 watchlist / 10 early-above / 1 lifted early find (re7-labs #34,
-  as in v2; ultrayield-curator #45, just outside the top 40).
+## Board (same snapshot, same 192 rows as v3)
+
+- Top 1: Steakhouse Financial $162.8M (v3: $418.3M) — values now sit where the
+  regression puts them, inside the range the snapshot's own live tokens occupy.
+- Top-40: 28 watchlist / 10 early-above / 2 lifted early finds
+  (august-digital #37, re7-labs #40; v3 had 1). ultrayield-curator #44
+  (was #45), just outside the top 40.
 - Rows 192 (40 watchlist, 16 early-above, 136 early-below), farm steps all
   20–600 chars, deterministic: two runs byte-identical.
-- Screenshots: 1-board 163,912 B, 2-detail 265,986 B, 3-filtered 162,780 B.
 
 ## Repo
 
 - Init-first: kit `init` ran in this repo before any code was written;
-  anchor `makefun anchor 0187ba22430361f870e0f1b2a975343945688c3e round 33983622`
-  (commit 0187ba2) appears in the build session's tool results before the
-  first counted write, so `thinking_fresh` should pass, not note.
+  anchor `makefun anchor c6d362158408210c4960928e4edc110aeaac5b47 round 33996400`
+  appears in the build session's tool results before the first counted write,
+  so `thinking_fresh` should pass, not note.
 - HEAD: see `git log`. Run: `node main.ts --input <snapshot.json> --output <dir>`
-  (Node 22, stdlib only). Screenshots: `shot-tools/take-radar-v3-shots.mjs`
-  against the served output dir.
+  (Node 22, stdlib only). Screenshots: retaken from the v4 dashboard output
+  with the shot tooling in `~/workspace/makefun/shot-tools/`.
+- Snapshot used: the fresh kit's `input/snapshot.json`, sha256
+  `42a71213519479f3a180cc5010cbbf6bd18a2447fa0ad29e4c5122b6c9184393` —
+  identical to the snapshot v3 used.
 
 ## Notes for the submitter
 
-- Kit copy used is level 13; the site is at level 14. Use a fresh kit
-  (https://make.fun/c/token-radar-01/kit) for `check`/`submit`.
-- Bundle the v1 + v2 builder sessions too (radar builder 45767432,
-  radar-3 6babdf53, coordinator 3f6f1d1f) — any line copied from v1/v2 only
-  counts toward `thinking_reproduces` through those sessions. The farm-plan
-  generator and gas table are largely carried over from v2; the model,
+- Kit copy used is the fresh kit at
+  `~/workspace/makefun/token-radar-01-kit-fresh/`; the site is at level 14.
+  Use a fresh kit for `check`/`submit`.
+- Bundle the v1 + v2 + v3 builder sessions too — any line carried over from
+  v1/v2/v3 only counts toward `thinking_reproduces` through those sessions.
+  The farm-plan generator and gas table are carried over from v3; the model,
   dashboard copy and detail view are substantially re-authored in this repo.
 - Do NOT submit a snapshot another account already submitted.

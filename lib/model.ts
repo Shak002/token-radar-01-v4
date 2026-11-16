@@ -1,74 +1,60 @@
-// Token Launch Radar — the value model (radar-5).
+// Token Launch Radar — the value model (radar-6).
 //
 // One sealed snapshot in, one ranked board out. The board ranks protocols that
 // record no token yet, by an implied value derived only from the snapshot's own
 // figures. No protocol name is ever special-cased: the same function scores
 // every row, and the dashboard states the formula in full.
 //
-// radar-5 changes the value model in one place, and it is the place the
-// previous model was weakest: how the base value is set. radar-4 priced a
-// protocol at TVL times its category's median market-cap/TVL. That multiple
-// is the snapshot's own figure, but it is a blunt one: it prices a $2.7B
-// curator at the same multiple as a $5M one, and the snapshot's own live
-// tokens say that is wrong. Across the 128 live-token protocols in this
-// snapshot, market cap grows with TVL to the power 0.52 — a protocol with
-// ten times the TVL is worth about three times the token, not ten times.
-// radar-4's top row, a $2.7B curator at $1.47B, is higher than all but a
-// handful of live tokens, and those are exchange and bridge tokens whose
-// recorded TVL does not capture what their token is worth. radar-5 keeps
-// the category multiple and adds a second estimator, the size curve, and
-// averages the two in log space, so neither the multiple's top-end inflation
-// nor the curve's top-end compression decides a row alone.
+// radar-6 changes the value model in one place, and it is the place the
+// previous model was weakest: how the base value is set. radar-5 averaged two
+// estimators in log space — the category multiple and the size curve. On the
+// snapshot's own live tokens the multiple is the weak half: it prices a $2.7B
+// curator at the same multiple as a $5M one, and the held-out check says the
+// curve alone beats the average (median |log10| 0.54 against 0.55 for the
+// average's base, 34% within 2x against 27%). So radar-6 drops the multiple
+// estimator entirely and fits one joint regression over all live-token
+// protocols, in log space:
 //
-//   estimator 1 — category multiple: the median market-cap/TVL of the
-//     live-token protocols in the same category, shrunk toward the global
-//     median with a prior of 4 protocols, clamped to 0.08..0.60. A category
-//     with no live token in the snapshot uses the global median.
-//   estimator 2 — size curve: an ordinary least-squares fit of
-//     log10(market cap) on log10(TVL) across all live-token protocols,
-//     plus a per-category offset. The offset is the shrunk mean of the
-//     category's residuals — each residual winsorized to +/-1.0 in log10,
-//     shrunk with a prior of 4, capped at +/-0.5 — so one protocol cannot
-//     move its whole category. The winsorizing matters: this snapshot holds
-//     one prediction-market token at 400x its TVL, and without it that one
-//     row would have priced every prediction market 8.8x above the curve.
-//     With it, the category's offset is +0.20, about 1.6x.
-//   base  = 10 ^ (0.5 * log10(estimator 1) + 0.5 * log10(estimator 2))
-//   growth    = clamp(change_7d, -50, 120) per cent
-//   growthMult= 1 + (growth / 100) x GROWTH_WEIGHT (0.5: a protocol that
-//                                                    grew 120% in a week
-//                                                    earns 1.6x; one that
-//                                                    fell 50% earns 0.75x)
-//   maturity  = MATURITY_FLOOR + min(age, 1460)/1460 x MATURITY_RANGE
-//                                                    (0.6..1.0: older, still
-//                                                    tokenless protocols are
-//                                                    closer to launch; age
-//                                                    unknown: 365)
-//   breadth   = 1 + BREADTH_STEP x min(chains - 1, 7)
-//                                                    (each extra chain up to
-//                                                    eight adds 3%: reach)
-//   implied   = max(1, round(base x growthMult x maturity x breadth))
+//   log10(market cap) = intercept + slope x log10(TVL)
+//                       + age_coef x log10(age in days)
+//                       + per-category offset
 //
-// The multipliers are deliberately small. They are the model's way of saying
-// a protocol that is growing, old without a token, and on many chains is
-// worth more than a flat one of the same size — but the size curve is the
-// value, and the multipliers nudge it. The held-out check below says the
-// nudges cost a little calibration on live tokens and are kept small on
-// purpose.
+// The regression is fitted by least squares on the snapshot's 128 live-token
+// protocols; the offset is the shrunk mean of the category's residuals — each
+// residual winsorized to +/-1.0 in log10, shrunk with a prior of 4, capped at
+// +/-0.5 — so one protocol cannot move its whole category. On this snapshot
+// the fit is log10(market cap) = 3.33 + 0.52 x log10(TVL) - 0.10 x log10(age):
+// a protocol with ten times the TVL is worth about three times the token, not
+// ten times, and age on its own is nearly flat — older tokenless protocols do
+// not trade at higher multiples, and the model says so instead of assuming
+// the opposite. The old maturity multiplier is gone with it: age now enters
+// once, through the fitted coefficient, never twice.
+//
+// Growth and breadth stay as small post-multipliers, not fitted terms, on
+// purpose. Fitted on these 128 tokens, a seven-day growth term comes out at
+// -1.63 with a standard error of 1.00 (t = -1.6): the snapshot cannot tell
+// whether fast TVL growth helps or hurts a token's multiple, and a fitted
+// term that size would price a protocol that grew 120% in a week at 1% of its
+// curve value. So growth keeps its deliberate small weight (0.5: a protocol
+// that grew 120% in a week earns 1.6x; one that fell 50% earns 0.75x) and each
+// extra chain up to eight adds 3% — nudges, stated as nudges, while the
+// regression is the value.
+//
+//   implied = max(1, round(regression value x growthMult x breadthMult))
 //
 // Checked, not just fitted: the model validates itself on the snapshot every
 // time it runs. The 128 live-token protocols are split into five folds by
-// slug order; the two estimators are fitted on four folds and scored on the
-// fifth, five times over. The dashboard states the result. On this snapshot
-// the full model predicts a held-out token's market cap with a median error
-// of 0.57 in log10 (about 3.7x), 25% of held-out tokens within 2x, 41%
-// within 3x; the base alone does 0.55 / 27% / 41%. The previous model, on
-// the same folds, did 0.67 (about 4.7x), 22% and 35%. The check is honest
-// about its limit: the snapshot's own live tokens span market-cap/TVL from
-// 0.003 to 400, so no model of this size predicts a single token closely —
-// what the check shows is that the calibration is real and the ranking is
-// sound (about six of the ten biggest held-out tokens land in the model's
-// top ten, eight or nine of the top twenty).
+// slug order; the regression is fitted on four folds and scored on the fifth,
+// five times over. The dashboard states the result. On this snapshot the full
+// model predicts a held-out token's market cap with a median error of 0.53 in
+// log10 (about 3.4x), 32% of held-out tokens within 2x, 46% within 3x; the
+// base alone does 0.53 / 33% / 45%. The previous model, on the same folds,
+// did 0.57 (about 3.7x), 25% and 41%. The check is honest about its limit:
+// the snapshot's own live tokens span market-cap/TVL from 0.003 to 400, so no
+// model of this size predicts a single token closely — what the check shows is
+// that the calibration is real and the ranking is sound (about six of the ten
+// biggest held-out tokens land in the model's top ten, eight or nine of the
+// top twenty).
 //
 // The watchlist is the floor, never the ceiling: every watchlist slug is
 // ranked, and the early radar adds every other rankable pre-token protocol,
@@ -113,22 +99,11 @@ export interface ModelConstants {
   growth_weight: number;
   growth_floor: number;
   growth_cap: number;
-  /** Maturity multiplier at age zero, and how much it grows by maturity_days. */
-  maturity_floor: number;
-  maturity_range: number;
-  maturity_days: number;
   /** Age in days assumed when the snapshot carries no listing date. */
   unknown_age_days: number;
   /** Extra multiple per chain past the first, and the chain count it stops at. */
   breadth_step: number;
   breadth_max_chains: number;
-  /** Pseudo-count of protocols pulling a category multiple toward the global median. */
-  category_prior: number;
-  /** The calibrated multiple never leaves this range. */
-  base_multiple_floor: number;
-  base_multiple_cap: number;
-  /** Weight of the size curve in the log-average of the two base estimators (the rest is the category multiple). */
-  blend_weight: number;
   /** Pseudo-count of protocols pulling a category's size-curve offset toward zero. */
   curve_prior: number;
   /** A category residual is clipped to +/- this many log10 before it is averaged. */
@@ -141,23 +116,16 @@ export const MODEL: ModelConstants = {
   growth_weight: 0.5,
   growth_floor: -50,
   growth_cap: 120,
-  maturity_floor: 0.6,
-  maturity_range: 0.4,
-  maturity_days: 1460,
   unknown_age_days: 365,
   breadth_step: 0.03,
   breadth_max_chains: 8,
-  category_prior: 4,
-  base_multiple_floor: 0.08,
-  base_multiple_cap: 0.6,
-  blend_weight: 0.5,
   curve_prior: 4,
   residual_winsor: 1.0,
   offset_cap: 0.5,
 };
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'radar-5';
+export const MODEL_VERSION = 'radar-6';
 
 /** How many pre-token protocols outside the watchlist the early radar carries, by TVL, above or below the floor. */
 export const EARLY_ROWS = 220;
@@ -194,18 +162,17 @@ export interface BoardRow {
   age_days: number | null;
   implied_value_usd: number;
   model: {
-    base_multiple: number;
-    /** Live-token protocols in this category the multiple was shrunk from (0: the global median was used). */
-    category_live_n: number;
-    /** The two base estimators and their log-average, before the multipliers. */
-    median_value_usd: number;
-    curve_value_usd: number;
-    base_value_usd: number;
+    /** The joint regression's value, before the growth and breadth nudges. */
+    regression_value_usd: number;
+    /** The regression's fitted terms for this row, in log10. */
+    tvl_term: number;
+    age_term: number;
     /** The category's size-curve offset in log10 (0: the curve as fitted). */
     curve_offset: number;
+    /** Live-token protocols in this category the offset was shrunk from (0: no offset). */
+    offset_live_n: number;
     growth_pct: number;
     growth_multiplier: number;
-    maturity_multiplier: number;
     breadth_multiplier: number;
     age_days: number | null;
   };
@@ -226,14 +193,12 @@ export interface RadarRow {
   listed_at: string | null;
   age_days: number | null;
   implied_value_usd: number;
-  base_multiple: number;
-  category_live_n: number;
-  median_value_usd: number;
-  curve_value_usd: number;
-  base_value_usd: number;
+  regression_value_usd: number;
+  tvl_term: number;
+  age_term: number;
   curve_offset: number;
+  offset_live_n: number;
   growth_multiplier: number;
-  maturity_multiplier: number;
   breadth_multiplier: number;
   farm_steps: string[];
 }
@@ -247,13 +212,6 @@ export interface LiveRow {
   tvl_usd: number;
   mcap_usd: number | null;
   change_7d: number | null;
-}
-
-/** One calibrated category multiple, for the dashboard's model page. */
-export interface CategoryMultiple {
-  category: string;
-  multiple: number;
-  live_n: number;
 }
 
 /** One fitted category offset on the size curve, for the dashboard's model page. */
@@ -305,12 +263,8 @@ export interface RadarData {
   early_above_floor: number;
   early_below_floor: number;
   live_size: number;
-  /** Median market-cap/TVL across the snapshot's live-token protocols. */
-  global_median_multiple: number;
-  /** The size curve's fit: log10(market cap) = intercept + slope x log10(TVL). */
-  size_curve: { intercept: number; slope: number };
-  /** The calibrated multiple per category, sorted by category name. */
-  category_multiples: CategoryMultiple[];
+  /** The joint regression's fit: log10(market cap) = intercept + slope x log10(TVL) + age_coef x log10(age in days). */
+  size_curve: { intercept: number; slope: number; age_coef: number };
   /** The fitted size-curve offset per category, sorted by category name. */
   category_offsets: CategoryOffset[];
   /** The held-out check, computed from this snapshot. */
@@ -365,64 +319,85 @@ export function liveProtocols(snapshot: Snapshot): SnapshotProtocol[] {
 
 /**
  * The calibration the model scores against, fitted from the snapshot's own
- * live-token protocols:
- *  - the global median market-cap/TVL, and one shrunk multiple per category
- *    that has a live token: (n / (n + prior)) x category median +
- *    (prior / (n + prior)) x global median, clamped to the model's floor
- *    and cap, so a category seen once cannot set the price on its own;
- *  - the size curve: log10(market cap) = intercept + slope x log10(TVL),
- *    fitted by least squares over all live tokens, plus one offset per
- *    category: the shrunk mean of that category's residuals, each residual
- *    clipped to +/-residual_winsor before averaging, shrunk with
- *    curve_prior, and capped at +/-offset_cap. Categories with no live
- *    token are absent from both maps and fall back to the global median
- *    (for the multiple) and to no offset (for the curve) at scoring time.
+ * live-token protocols: one joint least-squares regression of
+ * log10(market cap) on log10(TVL) and log10(age in days), plus one offset per
+ * category: the shrunk mean of that category's residuals, each residual
+ * clipped to +/-residual_winsor before averaging, shrunk with curve_prior,
+ * and capped at +/-offset_cap. Categories with no live token are absent from
+ * the offsets map and score with no offset. The regression is solved through
+ * its normal equations (three unknowns, Gaussian elimination with partial
+ * pivoting); a singular system falls back to a zero coefficient rather than
+ * failing the run.
  */
 export interface Calibration {
-  globalMedian: number;
-  byCategory: Map<string, { multiple: number; liveN: number; rawMedian: number }>;
   curveIntercept: number;
   curveSlope: number;
+  curveAgeCoef: number;
   curveOffsets: Map<string, { offset: number; liveN: number; rawMean: number }>;
 }
 
 export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Calibration {
-  return calibrateProtocols(liveProtocols(snapshot), model);
+  return calibrateProtocols(liveProtocols(snapshot), snapshot.as_of, model);
+}
+
+/** log10(age in days), with the model's unknown-age fallback; at least 0 (one day). */
+export function logAgeDays(asOf: string, listedAt: string | null, model: ModelConstants = MODEL): number {
+  const age = ageDays(asOf, listedAt) ?? model.unknown_age_days;
+  return Math.log10(Math.max(1, age));
+}
+
+/** Solve A x = b for a small square system, by Gaussian elimination with partial pivoting. */
+function solveLinear(matrix: number[][], rhs: number[]): number[] {
+  const n = rhs.length;
+  const a = matrix.map((row) => [...row]);
+  const b = [...rhs];
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(a[r]![c]!) > Math.abs(a[piv]![c]!)) piv = r;
+    [a[c], a[piv]] = [a[piv]!, a[c]!];
+    [b[c], b[piv]] = [b[piv]!, b[c]!];
+    if (Math.abs(a[c]![c]!) < 1e-12) continue;
+    for (let r = c + 1; r < n; r++) {
+      const f = a[r]![c]! / a[c]![c]!;
+      for (let cc = c; cc < n; cc++) a[r]![cc]! -= f * a[c]![cc]!;
+      b[r]! -= f * b[c]!;
+    }
+  }
+  const x = new Array<number>(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = b[r]!;
+    for (let c = r + 1; c < n; c++) s -= a[r]![c]! * x[c]!;
+    x[r] = Math.abs(a[r]![r]!) < 1e-12 ? 0 : s / a[r]![r]!;
+  }
+  return x;
 }
 
 /** The same fit, over an explicit list of live-token protocols (the held-out check fits on four fifths). */
 export function calibrateProtocols(
   live: SnapshotProtocol[],
+  asOf: string,
   model: ModelConstants = MODEL,
 ): Calibration {
-  const globalMedian = median(live.map((p) => p.mcap_usd! / p.tvl_usd));
-  const ratios = new Map<string, number[]>();
-  for (const p of live) {
-    const key = p.category ?? '(uncategorised)';
-    const list = ratios.get(key) ?? [];
-    list.push(p.mcap_usd! / p.tvl_usd);
-    ratios.set(key, list);
-  }
-  const byCategory = new Map<string, { multiple: number; liveN: number; rawMedian: number }>();
-  for (const [category, values] of [...ratios.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
-    const raw = median(values);
-    const weight = values.length / (values.length + model.category_prior);
-    const shrunk = weight * raw + (1 - weight) * globalMedian;
-    const multiple = Math.min(model.base_multiple_cap, Math.max(model.base_multiple_floor, shrunk));
-    byCategory.set(category, { multiple, liveN: values.length, rawMedian: raw });
-  }
-  // The size curve: least squares on log10(market cap) against log10(TVL).
-  const xs = live.map((p) => Math.log10(p.tvl_usd));
+  const rows = live.map((p) => [1, Math.log10(p.tvl_usd), logAgeDays(asOf, p.listed_at, model)]);
   const ys = live.map((p) => Math.log10(p.mcap_usd!));
-  const meanX = mean(xs);
-  const meanY = mean(ys);
-  const slope =
-    xs.reduce((acc, x, i) => acc + (x - meanX) * (ys[i]! - meanY), 0) /
-    xs.reduce((acc, x) => acc + (x - meanX) * (x - meanX), 0);
-  const intercept = meanY - slope * meanX;
+  const k = 3;
+  const xtx = Array.from({ length: k }, () => new Array<number>(k).fill(0));
+  const xty = new Array<number>(k).fill(0);
+  for (let i = 0; i < rows.length; i++) {
+    for (let r = 0; r < k; r++) {
+      xty[r]! += rows[i]![r]! * ys[i]!;
+      for (let c = 0; c < k; c++) xtx[r]![c]! += rows[i]![r]! * rows[i]![c]!;
+    }
+  }
+  const beta = solveLinear(xtx, xty);
+  const intercept = beta[0]!;
+  const slope = beta[1]!;
+  const ageCoef = beta[2]!;
   const residuals = new Map<string, number[]>();
-  for (const p of live) {
-    const raw = Math.log10(p.mcap_usd!) - (intercept + slope * Math.log10(p.tvl_usd));
+  for (let i = 0; i < live.length; i++) {
+    const p = live[i]!;
+    const fitted = intercept + slope * rows[i]![1]! + ageCoef * rows[i]![2]!;
+    const raw = ys[i]! - fitted;
     const clipped = Math.min(model.residual_winsor, Math.max(-model.residual_winsor, raw));
     const key = p.category ?? '(uncategorised)';
     const list = residuals.get(key) ?? [];
@@ -436,23 +411,7 @@ export function calibrateProtocols(
     const offset = Math.min(model.offset_cap, Math.max(-model.offset_cap, weight * rawMean));
     curveOffsets.set(category, { offset, liveN: values.length, rawMean });
   }
-  return { globalMedian, byCategory, curveIntercept: intercept, curveSlope: slope, curveOffsets };
-}
-
-/** A category's calibrated multiple: its own shrunk median, or the global median when the snapshot has no live token in it. */
-export function categoryMultiple(
-  category: string | null,
-  calibration: Calibration,
-  model: ModelConstants = MODEL,
-): { multiple: number; liveN: number } {
-  const hit = calibration.byCategory.get(category ?? '(uncategorised)');
-  if (hit === undefined) {
-    return {
-      multiple: Math.min(model.base_multiple_cap, Math.max(model.base_multiple_floor, calibration.globalMedian)),
-      liveN: 0,
-    };
-  }
-  return { multiple: hit.multiple, liveN: hit.liveN };
+  return { curveIntercept: intercept, curveSlope: slope, curveAgeCoef: ageCoef, curveOffsets };
 }
 
 /** A category's size-curve offset in log10, or 0 when the snapshot has no live token in it. */
@@ -465,44 +424,39 @@ export function curveOffset(
   return { offset: hit.offset, liveN: hit.liveN };
 }
 
-/** The three multipliers, shared by the scorer and the held-out check. */
+/** The two nudges, shared by the scorer and the held-out check. */
 export function multipliers(
   protocol: SnapshotProtocol,
   asOf: string,
   model: ModelConstants = MODEL,
-): { growthPct: number; growthMult: number; maturityMult: number; breadthMult: number; age: number | null } {
+): { growthPct: number; growthMult: number; breadthMult: number; age: number | null } {
   const age = ageDays(asOf, protocol.listed_at);
   const rawGrowth = finite(protocol.change_7d, 0);
   const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, rawGrowth));
   const growthMult = 1 + (growthPct / 100) * model.growth_weight;
-  const ageForModel = age ?? model.unknown_age_days;
-  const maturityMult =
-    model.maturity_floor +
-    (Math.min(Math.max(ageForModel, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
   const extraChains = Math.min(Math.max(protocol.chains.length - 1, 0), model.breadth_max_chains - 1);
   const breadthMult = 1 + model.breadth_step * extraChains;
-  return { growthPct, growthMult, maturityMult, breadthMult, age };
+  return { growthPct, growthMult, breadthMult, age };
 }
 
-/** The base value of one protocol: the log-average of the two estimators, before the multipliers. */
-export function baseValue(
+/** The regression value of one protocol, before the nudges, with its fitted terms. */
+export function regressionValue(
   protocol: SnapshotProtocol,
+  asOf: string,
   calibration: Calibration,
   model: ModelConstants = MODEL,
-): { medianValue: number; curveValue: number; base: number; baseMultiple: number; categoryLiveN: number; curveOffsetValue: number } {
-  const { multiple: baseMultiple, liveN: categoryLiveN } = categoryMultiple(protocol.category, calibration, model);
-  const medianValue = Math.max(1, protocol.tvl_usd * baseMultiple);
-  const { offset: curveOffsetValue } = curveOffset(protocol.category, calibration);
-  const curveValue = Math.max(
+): { value: number; tvlTerm: number; ageTerm: number; curveOffsetValue: number; offsetLiveN: number } {
+  const tvlTerm = calibration.curveSlope * Math.log10(protocol.tvl_usd);
+  const ageTerm = calibration.curveAgeCoef * logAgeDays(asOf, protocol.listed_at, model);
+  const { offset: curveOffsetValue, liveN: offsetLiveN } = curveOffset(protocol.category, calibration);
+  const value = Math.max(
     1,
-    10 ** (calibration.curveIntercept + calibration.curveSlope * Math.log10(protocol.tvl_usd) + curveOffsetValue),
+    10 ** (calibration.curveIntercept + tvlTerm + ageTerm + curveOffsetValue),
   );
-  const w = model.blend_weight;
-  const base = 10 ** (w * Math.log10(curveValue) + (1 - w) * Math.log10(medianValue));
-  return { medianValue, curveValue, base, baseMultiple, categoryLiveN, curveOffsetValue };
+  return { value, tvlTerm, ageTerm, curveOffsetValue, offsetLiveN };
 }
 
-/** The multipliers and the implied value one protocol gets under `model`. */
+/** The nudges and the implied value one protocol gets under `model`. */
 export function impliedValue(
   protocol: SnapshotProtocol,
   asOf: string,
@@ -510,32 +464,28 @@ export function impliedValue(
   model: ModelConstants = MODEL,
 ): {
   implied: number;
-  baseMultiple: number;
-  categoryLiveN: number;
-  medianValue: number;
-  curveValue: number;
-  baseValue: number;
+  regressionValue: number;
+  tvlTerm: number;
+  ageTerm: number;
   curveOffset: number;
+  offsetLiveN: number;
   growthPct: number;
   growthMult: number;
-  maturityMult: number;
   breadthMult: number;
   age: number | null;
 } {
-  const b = baseValue(protocol, calibration, model);
+  const r = regressionValue(protocol, asOf, calibration, model);
   const m = multipliers(protocol, asOf, model);
-  const implied = Math.max(1, Math.round(b.base * m.growthMult * m.maturityMult * m.breadthMult));
+  const implied = Math.max(1, Math.round(r.value * m.growthMult * m.breadthMult));
   return {
     implied,
-    baseMultiple: b.baseMultiple,
-    categoryLiveN: b.categoryLiveN,
-    medianValue: b.medianValue,
-    curveValue: b.curveValue,
-    baseValue: b.base,
-    curveOffset: b.curveOffsetValue,
+    regressionValue: r.value,
+    tvlTerm: r.tvlTerm,
+    ageTerm: r.ageTerm,
+    curveOffset: r.curveOffsetValue,
+    offsetLiveN: r.offsetLiveN,
     growthPct: m.growthPct,
     growthMult: m.growthMult,
-    maturityMult: m.maturityMult,
     breadthMult: m.breadthMult,
     age: m.age,
   };
@@ -544,7 +494,7 @@ export function impliedValue(
 /**
  * The held-out check: the live-token protocols, sorted by slug and split
  * into VALIDATION_FOLDS folds, are scored five times over — each time the
- * two estimators are fitted on four folds and the fifth is predicted, with
+ * regression is fitted on four folds and the fifth is predicted, with
  * the full model and with the base alone. Deterministic: the same snapshot
  * always gives the same numbers. The check is a calibration check, not a
  * proof: it says how well the model predicts tokens that already trade, so
@@ -568,15 +518,15 @@ export function validateCalibration(snapshot: Snapshot, model: ModelConstants = 
     const test = live.filter((_, i) => i % folds === f);
     const train = live.filter((_, i) => i % folds !== f);
     if (test.length === 0 || train.length === 0) continue;
-    const cal = calibrateProtocols(train, model);
+    const cal = calibrateProtocols(train, snapshot.as_of, model);
     const scored = test.map((p) => {
-      const b = baseValue(p, cal, model);
+      const b = regressionValue(p, snapshot.as_of, cal, model);
       const m = multipliers(p, snapshot.as_of, model);
       return {
         slug: p.slug,
         actual: p.mcap_usd!,
-        predicted: Math.max(1, b.base * m.growthMult * m.maturityMult * m.breadthMult),
-        base: Math.max(1, b.base),
+        predicted: Math.max(1, b.value * m.growthMult * m.breadthMult),
+        base: Math.max(1, b.value),
       };
     });
     for (const s of scored) {
@@ -616,11 +566,11 @@ export function validateCalibration(snapshot: Snapshot, model: ModelConstants = 
     const test = all.filter((_, i) => i % folds === f);
     const train = all.filter((_, i) => i % folds !== f);
     if (test.length === 0 || train.length === 0) continue;
-    const cal = calibrateProtocols(train, model);
+    const cal = calibrateProtocols(train, snapshot.as_of, model);
     for (const p of test) {
-      const b = baseValue(p, cal, model);
+      const b = regressionValue(p, snapshot.as_of, cal, model);
       const m = multipliers(p, snapshot.as_of, model);
-      scoredAll.push({ predicted: Math.max(1, b.base * m.growthMult * m.maturityMult * m.breadthMult), actual: p.mcap_usd! });
+      scoredAll.push({ predicted: Math.max(1, b.value * m.growthMult * m.breadthMult), actual: p.mcap_usd! });
     }
   }
   const spearman = rankCorrelation(
@@ -775,15 +725,13 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     age_days: s.age,
     implied_value_usd: s.implied,
     model: {
-      base_multiple: round4(s.baseMultiple),
-      category_live_n: s.categoryLiveN,
-      median_value_usd: Math.round(s.medianValue),
-      curve_value_usd: Math.round(s.curveValue),
-      base_value_usd: Math.round(s.baseValue),
+      regression_value_usd: Math.round(s.regressionValue),
+      tvl_term: round4(s.tvlTerm),
+      age_term: round4(s.ageTerm),
       curve_offset: round4(s.curveOffset),
+      offset_live_n: s.offsetLiveN,
       growth_pct: s.growthPct,
       growth_multiplier: round4(s.growthMult),
-      maturity_multiplier: round4(s.maturityMult),
       breadth_multiplier: round4(s.breadthMult),
       age_days: s.age,
     },
@@ -1159,14 +1107,12 @@ export function radarRow(row: BoardRow): RadarRow {
     listed_at: row.listed_at,
     age_days: row.age_days,
     implied_value_usd: row.implied_value_usd,
-    base_multiple: row.model.base_multiple,
-    category_live_n: row.model.category_live_n,
-    median_value_usd: row.model.median_value_usd,
-    curve_value_usd: row.model.curve_value_usd,
-    base_value_usd: row.model.base_value_usd,
+    regression_value_usd: row.model.regression_value_usd,
+    tvl_term: row.model.tvl_term,
+    age_term: row.model.age_term,
     curve_offset: row.model.curve_offset,
+    offset_live_n: row.model.offset_live_n,
     growth_multiplier: row.model.growth_multiplier,
-    maturity_multiplier: row.model.maturity_multiplier,
     breadth_multiplier: row.model.breadth_multiplier,
     farm_steps: row.farm_steps,
   };
@@ -1192,11 +1138,7 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     early_above_floor: early.filter((r) => r.origin === 'early-above').length,
     early_below_floor: early.filter((r) => r.origin === 'early-below').length,
     live_size: live.length,
-    global_median_multiple: round4(calibration.globalMedian),
-    size_curve: { intercept: round4(calibration.curveIntercept), slope: round4(calibration.curveSlope) },
-    category_multiples: [...calibration.byCategory.entries()]
-      .map(([category, v]) => ({ category, multiple: round4(v.multiple), live_n: v.liveN }))
-      .sort((a, b) => (a.category < b.category ? -1 : a.category > b.category ? 1 : 0)),
+    size_curve: { intercept: round4(calibration.curveIntercept), slope: round4(calibration.curveSlope), age_coef: round4(calibration.curveAgeCoef) },
     category_offsets: [...calibration.curveOffsets.entries()]
       .map(([category, v]) => ({ category, offset: round4(v.offset), live_n: v.liveN }))
       .sort((a, b) => (a.category < b.category ? -1 : a.category > b.category ? 1 : 0)),

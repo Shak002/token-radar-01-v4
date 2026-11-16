@@ -52,6 +52,7 @@
   if (DATA.size_curve) {
     $('curveIntercept').textContent = DATA.size_curve.intercept.toFixed(2);
     $('curveSlope').textContent = DATA.size_curve.slope.toFixed(2);
+    $('curveAge').textContent = (DATA.size_curve.age_coef >= 0 ? '+ ' : '− ') + Math.abs(DATA.size_curve.age_coef).toFixed(2);
   }
   if (top) $('topImplied').textContent = money(top.implied_value_usd);
 
@@ -130,17 +131,15 @@
       return '<li><strong>Step ' + (i + 1) + '.</strong> ' + esc(s) + '</li>';
     }).join('');
     var origin = r.origin === 'watchlist' ? 'on the watchlist' : r.origin === 'early-above' ? 'early find above the floor' : 'early find below the floor';
-    // Where this row's two estimators came from: its own category's live-token
-    // median, shrunk toward the global median — and the size curve, moved by
-    // the category's offset. A category with no live token uses the global
-    // median for the multiple and no offset for the curve.
-    var calib = r.category_live_n > 0
-      ? 'the ' + esc(r.category || 'uncategorised') + ' multiple: the median market-cap/TVL of ' + r.category_live_n +
-        ' live-token ' + esc(r.category || '') + ' protocol' + (r.category_live_n === 1 ? '' : 's') +
-        ' in this snapshot, shrunk toward the ' + DATA.global_median_multiple + ' global median; the curve is moved by the ' +
-        esc(r.category || '') + ' offset ' + (r.curve_offset >= 0 ? '+' : '') + r.curve_offset.toFixed(2) + ' in log10'
-      : 'no live-token ' + esc(r.category || 'uncategorised') + ' protocol in this snapshot, so the ' +
-        DATA.global_median_multiple + ' global median market-cap/TVL for the multiple and no offset on the curve';
+    // Where this row's regression terms came from: the fitted TVL and age
+    // terms, and its category's offset — the shrunk mean of that category's
+    // live-token residuals. A category with no live token scores with no
+    // offset at all.
+    var calib = r.offset_live_n > 0
+      ? 'the ' + esc(r.category || 'uncategorised') + ' offset ' + (r.curve_offset >= 0 ? '+' : '') + r.curve_offset.toFixed(2) +
+        ' in log10, from ' + r.offset_live_n + ' live-token ' + esc(r.category || '') +
+        ' protocol' + (r.offset_live_n === 1 ? '' : 's') + ' in this snapshot'
+      : 'no live-token ' + esc(r.category || 'uncategorised') + ' protocol in this snapshot, so no offset on the curve';
     $('detailBody').innerHTML =
       '<p class="note">Rank #' + r.rank + ' · ' + origin + ' · pre-token</p>' +
       '<h2>' + esc(r.name) + '</h2>' +
@@ -152,10 +151,10 @@
       '<div><b>' + age(r.age_days) + '</b><span>age with no token</span></div>' +
       '</div>' +
       '<h3>How the value is built</h3>' +
-      '<p>Two estimators of the same value, averaged in log space: the category multiple gives ' + money(r.median_value_usd) +
-      ' (TVL × ' + r.base_multiple + ' — ' + calib + '), and the size curve gives ' + money(r.curve_value_usd) +
-      '. Their average is the base ' + money(r.base_value_usd) + '. Then growth ' + r.growth_multiplier.toFixed(2) +
-      ' × maturity ' + r.maturity_multiplier.toFixed(2) + ' × breadth ' + r.breadth_multiplier.toFixed(2) +
+      '<p>One joint regression, fitted across all live-token protocols in the snapshot: ' + money(r.regression_value_usd) +
+      ' = 10 ^ (' + DATA.size_curve.intercept.toFixed(2) + ' + TVL term ' + r.tvl_term.toFixed(2) + ' + age term ' + r.age_term.toFixed(2) +
+      ' + offset ' + (r.curve_offset >= 0 ? '+' : '') + r.curve_offset.toFixed(2) + ' — ' + calib + '). Then growth ' + r.growth_multiplier.toFixed(2) +
+      ' × breadth ' + r.breadth_multiplier.toFixed(2) +
       ' = <strong>' + money(r.implied_value_usd) + '</strong>. Same formula for every protocol; no name is special-cased.</p>' +
       '<h3>Farm plan — six steps</h3><ol>' + steps + '</ol>' +
       '<p class="fine">This is a plan for farming a protocol that records no token. It is not a promise of an airdrop, and never pay to claim.</p>';
@@ -182,32 +181,24 @@
   // ---- model tab ----------------------------------------------------------
   var m = DATA.model;
   $('formula').textContent =
-    'base = 10 ^ (0.5 × log10(median value) + 0.5 × log10(curve value))\n' +
-    'median value = TVL × category_multiple\n' +
-    'category_multiple = median market-cap/TVL of the live-token protocols in the\n' +
-    '  same category, shrunk toward the ' + DATA.global_median_multiple + ' global median with a prior of ' + m.category_prior +
-    ' protocols, clamped to ' + m.base_multiple_floor + '..' + m.base_multiple_cap + '\n' +
-    'curve value = 10 ^ (' + DATA.size_curve.intercept.toFixed(2) + ' + ' + DATA.size_curve.slope.toFixed(2) +
-    ' × log10(TVL) + category_offset)\n' +
+    'regression value = 10 ^ (' + DATA.size_curve.intercept.toFixed(2) + ' + ' + DATA.size_curve.slope.toFixed(2) +
+    ' × log10(TVL) + ' + DATA.size_curve.age_coef.toFixed(2) + ' × log10(age_days) + category_offset)\n' +
     'category_offset = shrunk mean of the category\'s residuals, each clipped to ±' + m.residual_winsor +
     ' in log10, prior ' + m.curve_prior + ', capped at ±' + m.offset_cap + '\n' +
-    'implied = max(1, round(base × growth × maturity × breadth))\n' +
+    'implied = max(1, round(regression value × growth × breadth))\n' +
     'growth   = 1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 × ' + m.growth_weight + '\n' +
-    'maturity = ' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' × ' + m.maturity_range + '   (age unknown: ' + m.unknown_age_days + ' days)\n' +
-    'breadth  = 1 + ' + m.breadth_step + ' × min(chains − 1, ' + (m.breadth_max_chains - 1) + ')';
+    'breadth  = 1 + ' + m.breadth_step + ' × min(chains − 1, ' + (m.breadth_max_chains - 1) + ')\n' +
+    'age_days = days from listed_at to the snapshot date (unknown: ' + m.unknown_age_days + ' days)';
   var constRows = Object.keys(m).map(function (k) {
     return '<tr><td>' + esc(k) + '</td><td class="num">' + esc(String(m[k])) + '</td></tr>';
   }).join('');
   $('modelConsts').innerHTML = '<table><thead><tr><th>Constant</th><th class="num">Value</th></tr></thead><tbody>' + constRows + '</tbody></table>';
-  var offsets = {};
-  (DATA.category_offsets || []).forEach(function (c) { offsets[c.category] = c; });
-  var calRows = (DATA.category_multiples || []).map(function (c) {
-    var o = offsets[c.category];
-    return '<tr><td>' + esc(c.category) + '</td><td class="num">' + c.multiple.toFixed(3) + '</td><td class="num">' + c.live_n + '</td><td class="num">' + (o ? (o.offset >= 0 ? '+' : '') + o.offset.toFixed(2) : '—') + '</td></tr>';
+  var calRows = (DATA.category_offsets || []).map(function (c) {
+    return '<tr><td>' + esc(c.category) + '</td><td class="num">' + (c.offset >= 0 ? '+' : '') + c.offset.toFixed(2) + '</td><td class="num">' + c.live_n + '</td></tr>';
   }).join('');
   if (calRows) {
-    $('modelConsts').innerHTML += '<h3>Category multiples and curve offsets</h3><p>Each multiple is the median market-cap/TVL of the live-token protocols in that category, shrunk toward the ' + DATA.global_median_multiple + ' global median and clamped to ' + m.base_multiple_floor + '..' + m.base_multiple_cap + '. Each offset moves the size curve for that category in log10: +0.20 means the category\'s tokens run about 1.6× above the curve, −0.30 about half. A category with no live token in the snapshot is absent here and uses the global median for the multiple and no offset for the curve.</p>' +
-      '<table><thead><tr><th>Category</th><th class="num">Multiple</th><th class="num">Live protocols</th><th class="num">Curve offset</th></tr></thead><tbody>' + calRows + '</tbody></table>';
+    $('modelConsts').innerHTML += '<h3>Category curve offsets</h3><p>Each offset moves the regression for that category in log10: +0.20 means the category\'s tokens run about 1.6× above the curve, −0.30 about half. A category with no live token in the snapshot is absent here and scores with no offset.</p>' +
+      '<table><thead><tr><th>Category</th><th class="num">Curve offset</th><th class="num">Live protocols</th></tr></thead><tbody>' + calRows + '</tbody></table>';
   }
 
   // ---- held-out check -----------------------------------------------------
@@ -215,7 +206,7 @@
   if (v) {
     $('validationBox').innerHTML =
       '<p style="margin:0 0 4px"><strong>The model checks itself on this snapshot.</strong> The ' + v.n + ' live-token protocols are split into ' + v.folds +
-      ' folds by slug; the two estimators are fitted on four folds and scored on the fifth, five times over.</p>' +
+      ' folds by slug; the regression is fitted on four folds and scored on the fifth, five times over.</p>' +
       '<div class="valnums">' +
       '<div><b>' + v.median_abs_log10.toFixed(2) + '</b><span>median |log10 error| (about ×' + v.median_abs_factor.toFixed(1) + ')</span></div>' +
       '<div><b>' + Math.round(v.within_2x * 100) + '%</b><span>held-out tokens within 2× of their real market cap</span></div>' +
@@ -224,7 +215,7 @@
       '<div><b>' + Math.round(v.precision_at_10 * 100) + '%</b><span>of the ten biggest held-out tokens land in the model\'s top ten</span></div>' +
       '<div><b>' + Math.round(v.precision_at_20 * 100) + '%</b><span>of the top twenty land in the top twenty</span></div>' +
       '</div>' +
-      '<p class="fine" style="margin:8px 0 0">The base alone, without the growth, maturity and breadth nudges, scores ' + v.base_median_abs_log10.toFixed(2) +
+      '<p class="fine" style="margin:8px 0 0">The base alone, without the growth and breadth nudges, scores ' + v.base_median_abs_log10.toFixed(2) +
       ' in log10 with ' + Math.round(v.base_within_2x * 100) + '% within 2× — the nudges cost a little calibration and are kept small on purpose. The model is unbiased: median log10(predicted / actual) ' +
       (v.bias_log10 >= 0 ? '+' : '') + v.bias_log10.toFixed(2) + '.</p>';
   }
