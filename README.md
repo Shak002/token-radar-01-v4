@@ -1,5 +1,9 @@
 # Token Launch Radar v4 — model radar-6
 
+[![make.fun](https://make.fun/badge/token-radar-01.svg)](https://make.fun)
+[![rank](https://make.fun/badge/token-radar-01/shak002/token-radar-01-v4/rank.svg)](https://make.fun)
+[![reward](https://make.fun/badge/token-radar-01/shak002/token-radar-01-v4/reward.svg)](https://make.fun)
+
 Build for make.fun competition `token-radar-01` (account @najj02x).
 Closes 2026-12-14 10:00 UTC. Do not submit from here — the main agent submits.
 
